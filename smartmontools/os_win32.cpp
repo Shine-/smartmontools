@@ -383,7 +383,59 @@ STATIC_ASSERT(sizeof(SCSI_REQUEST_BLOCK) == SELECT_WIN_32_64(64, 88));
 
 } // extern "C"
 
-/////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////
+
+void hexdump (const char *desc, const void *addr, const int len) {
+    int i;
+    unsigned char buff[17];
+    const unsigned char *pc = (const unsigned char*)addr;
+
+    // Output description if given.
+    if (desc != NULL)
+        printf ("%s:\n", desc);
+
+    if (len == 0) {
+        printf("  ZERO LENGTH\n");
+        return;
+    }
+    if (len < 0) {
+        printf("  NEGATIVE LENGTH: %i\n",len);
+        return;
+    }
+
+    // Process every byte in the data.
+    for (i = 0; i < len; i++) {
+        // Multiple of 16 means new line (with line offset).
+
+        if ((i % 16) == 0) {
+            // Just don't print ASCII for the zeroth line.
+            if (i != 0)
+                printf ("  %s\n", buff);
+
+            // Output the offset.
+            printf ("  %04x ", i);
+        }
+
+        // Now the hex code for the specific character.
+        printf (" %02x", pc[i]);
+
+        // And store a printable ASCII character for later.
+        if ((pc[i] < 0x20) || (pc[i] > 0x7e))
+            buff[i % 16] = '.';
+        else
+            buff[i % 16] = pc[i];
+        buff[(i % 16) + 1] = '\0';
+    }
+
+    // Pad out last line if not exactly 16 characters.
+    while ((i % 16) != 0) {
+        printf ("   ");
+        i++;
+    }
+
+    // And print the final ASCII bit.
+    printf ("  %s\n", buff);
+}
 
 namespace os_win32 { // no need to publish anything, name provided for Doxygen
 
@@ -2022,8 +2074,8 @@ int csmi_device::get_phy_info(CSMI_SAS_PHY_INFO & phy_info, port_2_index_map & p
   if (!csmi_ioctl(CC_CSMI_SAS_GET_DRIVER_INFO, &driver_info_buf.IoctlHeader, sizeof(driver_info_buf)))
     return -1;
 
+  const CSMI_SAS_DRIVER_INFO & driver_info = driver_info_buf.Information;
   if (scsi_debugmode > 1) {
-    const CSMI_SAS_DRIVER_INFO & driver_info = driver_info_buf.Information;
     pout("CSMI_SAS_DRIVER_INFO:\n");
     pout("  Name:        \"%.81s\"\n", driver_info.szName);
     pout("  Description: \"%.81s\"\n", driver_info.szDescription);
@@ -2041,6 +2093,16 @@ int csmi_device::get_phy_info(CSMI_SAS_PHY_INFO & phy_info, port_2_index_map & p
   if (phy_info.bNumberOfPhys > max_number_of_ports) {
     set_err(EIO, "CSMI_SAS_PHY_INFO: Bogus NumberOfPhys=%d", phy_info.bNumberOfPhys);
     return -1;
+  }
+  if (!memcmp(driver_info.szName, "rcraid", 6+1)) {
+    for (int i=0; i < max_number_of_ports; i++)
+    {
+      phy_info.Phy[i].Attached.bPhyIdentifier = i;
+      phy_info.Phy[i].bPortIdentifier = i;
+      phy_info.Phy[i].Identify.bPhyIdentifier = i;
+      phy_info.Phy[i].Attached.bTargetPortProtocol = CSMI_SAS_PROTOCOL_SATA;
+    }
+    phy_info.bNumberOfPhys = max_number_of_ports;
   }
 
   // Create port -> index map
@@ -2062,8 +2124,8 @@ int csmi_device::get_phy_info(CSMI_SAS_PHY_INFO & phy_info, port_2_index_map & p
      bool found = false;
      for (int i = 0; i < max_number_of_ports; i++) {
         const CSMI_SAS_PHY_ENTITY & pe = phy_info.Phy[i];
-        if (pe.Identify.bDeviceType == CSMI_SAS_NO_DEVICE_ATTACHED)
-          continue;
+        //if (pe.Identify.bDeviceType == CSMI_SAS_NO_DEVICE_ATTACHED)
+        //  continue;
 
         // Try to detect which field contains the actual port number.
         // Use a bPhyIdentifier or the bPortIdentifier if unique
@@ -2095,8 +2157,8 @@ int csmi_device::get_phy_info(CSMI_SAS_PHY_INFO & phy_info, port_2_index_map & p
     pout("CSMI_SAS_PHY_INFO: NumberOfPhys=%d\n", phy_info.bNumberOfPhys);
     for (int i = 0; i < max_number_of_ports; i++) {
       const CSMI_SAS_PHY_ENTITY & pe = phy_info.Phy[i];
-      if (!nonempty(&pe, sizeof(pe)))
-        continue;
+      //if (!nonempty(&pe, sizeof(pe)))
+      //  continue;
       const CSMI_SAS_IDENTIFY & id = pe.Identify, & at = pe.Attached;
 
       int port = -1;
@@ -2176,8 +2238,8 @@ bool csmi_device::select_port(int port)
   }
 
   const CSMI_SAS_PHY_ENTITY & phy_ent = phy_info.Phy[port_index];
-  if (phy_ent.Attached.bDeviceType == CSMI_SAS_NO_DEVICE_ATTACHED)
-    return set_err(ENOENT, "No device on port %d", port);
+  // if (phy_ent.Attached.bDeviceType == CSMI_SAS_NO_DEVICE_ATTACHED)
+  //  return set_err(ENOENT, "No device on port %d", port);
 
   switch (phy_ent.Attached.bTargetPortProtocol) {
     case CSMI_SAS_PROTOCOL_SATA:
@@ -2469,8 +2531,10 @@ bool win_csmi_device::csmi_ioctl(unsigned code, IOCTL_HEADER * csmi_buffer,
   }
 
   if (scsi_debugmode > 1)
+   {
     pout("  IOCTL_SCSI_MINIPORT(CC_CSMI_%u) succeeded, bytes returned: %u\n", code, (unsigned)num_out);
-
+    hexdump("Hex Dump",csmi_buffer,num_out);
+   }
   return true;
 }
 
